@@ -1,81 +1,90 @@
 package main
 
 import (
-    "net/http"
+    "database/sql"
+    _"github.com/lib/pq"
     "github.com/gin-gonic/gin"
+    "github.com/joho/godotenv"
+    "github.com/go-redis/redis/v8"
+    "log"
+    "strconv"
+    "fmt"
+    "os"
+    "go-simple-crud/controllers"
+    "go-simple-crud/repositories"
+    "go-simple-crud/services"
 )
-
-type album struct {
-    ID     string  `json:"id"`
-    Title  string  `json:"title"`
-    Artist string  `json:"artist"`
-    Price  float64 `json:"price"`
-}
-
-var albums = []album{
-    {ID: "1", Title: "Blue Train", Artist: "John Coltrane", Price: 56.99},
-    {ID: "2", Title: "Jeru", Artist: "Gerry Mulligan", Price: 17.99},
-    {ID: "3", Title: "Sarah Vaughan and Clifford Brown", Artist: "Sarah Vaughan", Price: 39.99},
-}
-
-func getAlbums(c *gin.Context) {
-    c.IndentedJSON(http.StatusOK, albums)
-}
-
-func addAlbum(c *gin.Context) {
-    var newAlbum album
-
-    if err := c.BindJSON(&newAlbum); err != nil {
-        return
-    }
-
-    albums = append(albums, newAlbum)
-    c.IndentedJSON(http.StatusCreated, newAlbum)
-}
-
-func updateAlbum(c *gin.Context) {
-    id := c.Param("id")
-
-	var updatedAlbum album
-
-    if err := c.BindJSON(&updatedAlbum); err != nil {
-        return
-    }
-
-    updatedTitle := updatedAlbum.Title
-    updatedArtist := updatedAlbum.Artist
-    updatedPrice := updatedAlbum.Price
-
-	for i := range albums {
-		if albums[i].ID == id {
-			albums[i].Title = updatedTitle
-			albums[i].Artist = updatedArtist
-			albums[i].Price = updatedPrice
-			c.JSON(http.StatusOK, gin.H{"success": "album updated"})
-			return
-		}
-	}
-	c.JSON(http.StatusNotFound, gin.H{"error": "album not found"})	
-}
-
-func removeAlbum(c *gin.Context) {
-    id := c.Param("id")
-	
-	for i := range albums {
-		if albums[i].ID == id {
-			albums = append(albums[:i], albums[i+1:]...)
-			c.JSON(http.StatusOK, gin.H{"success": "album deleted"})
-			return
-		}
-	}
-	c.JSON(http.StatusNotFound, gin.H{"error": "album not found"})	
-}
 
 func main() {
 	r := gin.Default()
-    r.GET("/albums", getAlbums)
-    r.POST("/albums", addAlbum)
-	r.PUT("/albums/:id", updateAlbum)
-	r.DELETE("/albums/:id", removeAlbum)
+    
+    err := godotenv.Load()
+    if err != nil {
+        log.Fatal("Error loading .env file")
+    }
+
+    db_type := os.Getenv("DB_TYPE")
+
+    postgres_host := os.Getenv("POSTGRES_DB_HOST")
+    postgres_port := os.Getenv("POSTGRES_DB_PORT")
+    postgres_username := os.Getenv("POSTGRES_DB_USERNAME")
+    postgres_password := os.Getenv("POSTGRES_DB_PASSWORD")
+    postgres_db := os.Getenv("POSTGRES_DB_NAME")
+
+    redis_host := os.Getenv("REDIS_HOST")
+    redis_port := os.Getenv("REDIS_PORT")
+    redis_password := os.Getenv("REDIS_PASSWORD")
+    redis_db := os.Getenv("REDIS_DB")
+
+    var albumRepo services.AlbumRepository
+
+    switch db_type {
+        case "postgres":
+            connStr := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable", postgres_host, postgres_port, postgres_username, postgres_password, postgres_db)
+            db, err := sql.Open("postgres", connStr)
+            if err != nil {
+                log.Fatal(err)
+            }
+            defer db.Close()
+            createTableSQL := `
+                CREATE TABLE IF NOT EXISTS albums (
+                    id SERIAL PRIMARY KEY,
+                    title VARCHAR(100),
+                    artist VARCHAR(100),
+                    price NUMERIC
+                );`
+        
+            _, err = db.Exec(createTableSQL)
+            if err != nil {
+                log.Fatalf("Failed to create table: %v", err)
+            }
+        
+            fmt.Println("Albums table created or already exists.")
+            albumRepo = &repositories.PostgresAlbumRepository{DB: db}
+
+        case "redis":
+            address := fmt.Sprintf("%s:%s", redis_host, redis_port)
+            num, err := strconv.Atoi(redis_db)
+            if err != nil {
+                fmt.Println("Unsupported Redis DB Type:", err)
+                return
+            }
+            redisClient := redis.NewClient(&redis.Options{
+                Addr: address,
+                Password: redis_password,
+                DB: num,
+            })
+            albumRepo = &repositories.RedisAlbumRepository{Client: redisClient}
+
+        default:
+            log.Fatal("Unsupported DB_TYPE. Use 'postgres' or 'redis'.")
+    }
+
+    albumService := services.NewAlbumService(albumRepo)
+
+    r.GET("/albums", controllers.GetAlbums(albumService))
+    r.POST("/albums", controllers.CreateAlbum(albumService))
+	r.PUT("/albums/:id", controllers.UpdateAlbum(albumService))
+	r.DELETE("/albums/:id", controllers.DeleteAlbum(albumService))
 	r.Run("localhost:8080")
 }
