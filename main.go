@@ -1,6 +1,7 @@
 package main
 
 import (
+    "context"
     "database/sql"
     _"github.com/lib/pq"
     "github.com/gin-gonic/gin"
@@ -74,7 +75,8 @@ func main() {
                 Password: redis_password,
                 DB: num,
             })
-            albumRepo = &repositories.RedisAlbumRepository{Client: redisClient}
+            ctx := context.Background()
+            albumRepo = &repositories.RedisAlbumRepository{Client: redisClient, Ctx: ctx}
 
         default:
             log.Fatal("Unsupported DB_TYPE. Use 'postgres' or 'redis'.")

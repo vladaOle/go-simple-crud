@@ -6,11 +6,12 @@ import (
     "github.com/go-redis/redis/v8"
     "go-simple-crud/models"
     "strconv"
+    "errors"
 )
 
 type RedisAlbumRepository struct {
     Client *redis.Client
-    ctx    context.Context
+    Ctx    context.Context
 }
 
 func (r *RedisAlbumRepository) Create(album models.Album) (models.Album, error) {
@@ -19,7 +20,7 @@ func (r *RedisAlbumRepository) Create(album models.Album) (models.Album, error) 
     if err != nil {
         return models.Album{}, err
     }
-    err = r.Client.Set(r.ctx, albumKey, albumJSON, 0).Err()
+    err = r.Client.Set(r.Ctx, albumKey, albumJSON, 0).Err()
     if err != nil {
         return models.Album{}, err
     }
@@ -28,15 +29,16 @@ func (r *RedisAlbumRepository) Create(album models.Album) (models.Album, error) 
 
 func (r *RedisAlbumRepository) GetList() ([]models.Album, error) {
     var albums []models.Album
-    keys, err := r.Client.Keys(r.ctx, "album:*").Result()
+
+    keys, err := r.Client.Keys(r.Ctx, "album:*").Result()
     if err != nil {
         return nil, err
     }
 
     for _, key := range keys {
-        albumJSON, err := r.Client.Get(r.ctx, key).Result()
+        albumJSON, err := r.Client.Get(r.Ctx, key).Result()
         if err != nil {
-            continue // Skip if there's an error
+            continue
         }
         var album models.Album
         err = json.Unmarshal([]byte(albumJSON), &album)
@@ -49,11 +51,21 @@ func (r *RedisAlbumRepository) GetList() ([]models.Album, error) {
 
 func (r *RedisAlbumRepository) Update(album models.Album) (models.Album, error) {
     albumKey := "album:" + strconv.Itoa(album.ID)
+
+    exists, err := r.Client.Exists(r.Ctx, albumKey).Result()
+    if err != nil {
+        return models.Album{}, err
+    }
+    
+    if exists == 0 {
+        return models.Album{}, errors.New("album not found")
+    }
+
     albumJSON, err := json.Marshal(album)
     if err != nil {
         return models.Album{}, err
     }
-    err = r.Client.Set(r.ctx, albumKey, albumJSON, 0).Err()
+    err = r.Client.Set(r.Ctx, albumKey, albumJSON, 0).Err()
     if err != nil {
         return models.Album{}, err
     }
@@ -62,6 +74,16 @@ func (r *RedisAlbumRepository) Update(album models.Album) (models.Album, error) 
 
 func (r *RedisAlbumRepository) Delete(id int) error {
     albumKey := "album:" + strconv.Itoa(id)
-    err := r.Client.Del(r.ctx, albumKey).Err()
+
+    exists, err := r.Client.Exists(r.Ctx, albumKey).Result()
+    if err != nil {
+        return err
+    }
+
+    if exists == 0 {
+        return errors.New("album not found")
+    }
+
+    err = r.Client.Del(r.Ctx, albumKey).Err()
     return err
 }
